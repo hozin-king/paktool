@@ -177,12 +177,43 @@ def read_entry_data(data: bytes, e: dict, sm4_key: bytes | None = None,
     return raw
 
 
+def _try_pubg_list(args):
+    """Coba parse sebagai PUBG Mobile. Return True bila berhasil."""
+    from pubgpak import PubgPak, PubgFormatError
+    try:
+        pp = PubgPak(args.pak)
+    except PubgFormatError:
+        return False
+    print(f"[PUBG Mobile] pak v{pp.version} | mount: {pp.mount} | "
+          f"{len(pp.files)} file")
+    for name, size in pp.list_files():
+        print(f"  {size:>10}  {name}")
+    return True
+
+
+def _try_pubg_unpack(args):
+    """Coba unpack sebagai PUBG Mobile. Return True bila berhasil."""
+    from pubgpak import PubgPak, PubgFormatError
+    try:
+        pp = PubgPak(args.pak)
+    except PubgFormatError:
+        return False
+    out = args.out or os.path.splitext(os.path.basename(args.pak))[0] + "_out"
+    ok, fail, fails = pp.extract_all(out)
+    for f_ in fails:
+        print(f"  ! gagal: {f_}")
+    print(f"selesai: {ok}/{len(pp.files)} file -> {out}/")
+    return True
+
+
 def cmd_list(args):
+    if _try_pubg_list(args):
+        return
     data = open(args.pak, "rb").read()
     info = parse_footer(data)
     key = bytes.fromhex(args.key) if args.key else None
     mount, entries = parse_index(data, info, key)
-    print(f"pak v{info['version']} | mount: {mount} | {len(entries)} file")
+    print(f"[UE4 standar] pak v{info['version']} | mount: {mount} | {len(entries)} file")
     for e in entries:
         enc = " [enc]" if e["flags"] & FLAG_ENCRYPTED else ""
         comp = f" [c:{e['method']}]" if e["method"] else ""
@@ -190,6 +221,8 @@ def cmd_list(args):
 
 
 def cmd_unpack(args):
+    if _try_pubg_unpack(args):
+        return
     data = open(args.pak, "rb").read()
     info = parse_footer(data)
     key = bytes.fromhex(args.key) if args.key else None

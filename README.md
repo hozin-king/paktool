@@ -17,29 +17,32 @@ cd paktool
 
 Di PC/laptop: install Python 3.10+ dari python.org, lalu clone repo yang sama.
 
-### 2. Cara pakai — TUI (tampilan terminal, RECOMMENDED buat Termux)
+### 2. Cara pakai — tool gabungan (RECOMMENDED)
 
 ```bash
 python3 paktool_tui.py
 ```
 
-Muncul menu bernomor ala tool modding:
+Satu tool untuk semuanya — pas dijalankan muncul menu:
 
 ```
-1. List isi .pak     → lihat daftar file di dalam pak
-2. Unpack .pak       → ekstrak semua file ke folder
-3. Repack folder     → bangun ulang .pak dari folder
-4. Keluar
+1. Unpack .pak (auto-detect format)
+2. Repack folder -> .pak
+3. Find SM4 (scan libUE4.so)
+4. List isi .pak
+5. Keluar
 ```
 
-Alurnya tiap menu:
-- **List**: pilih file .pak (ketik nomor) → masukkan kunci SM4 kalau
-  diminta (kosongkan kalau pak tidak dienkripsi) → daftar file tampil.
-- **Unpack**: pilih file .pak → kunci SM4 (bila perlu) → ketik nama
-  folder output → tunggu progress bar 100% → file ada di folder itu.
-- **Repack**: ketik folder sumber (berisi file hasil editanmu) → ketik
-  nama file .pak output → kunci SM4 (bila mau dienkripsi) → pilih
-  kompres zlib Y/n → tunggu sampai selesai.
+- **Auto-scan**: tiap menu tampil, folder di-scan ulang — file `.pak`
+  yang baru ditambah langsung muncul di daftar, tanpa restart tool.
+- **Auto-detect format**: unpack/list otomatis mengenali format
+  **PUBG Mobile asli** (footer ZUC, index AES/RSA, payload
+  SIMPLE1/SIMPLE2/SM4-custom Tencent) atau UE4 standar (fallback).
+  Kunci SM4 per-file diturunkan otomatis — tidak perlu input manual.
+- **Find SM4**: scan `libUE4.so` untuk mencari secret SM4 yang dikenal
+  + kandidat secret pola baru (buat versi game yang lebih baru).
+- **Repack**: membangun pak format UE4 standar. Catatan jujur: repack
+  ke format PUBG Mobile tidak bisa tanpa private key RSA milik game.
 
 ### 3. Cara pakai — CLI (perintah langsung, buat scripting)
 
@@ -88,6 +91,19 @@ python3 paktool.py --key <key> repack bongkar/ -o game_patch_4.6.0.21542_baru.pa
 | `jumlah entry tidak wajar` | index gagal diparse (mungkin diobfuscate) | pak versi itu butuh penanganan khusus |
 
 ---
+
+## Format PUBG Mobile asli (rewrite 6 Okt 2026)
+
+Tool ini sekarang mengikuti format asli PUBG Mobile (hasil riset GitHub/forum):
+- Footer 45 byte + extended — field di-obfuscate cipher ZUC-128
+- Index: AES-256-CBC (pak v>7, kunci via unwrap RSA) atau XOR 0x79 (v≤7)
+- Payload per-file: SIMPLE1 (XOR 0x79), SIMPLE2 (rolling XOR `0xE55B4ED1`),
+  atau SM4 **custom Tencent** (SBOX/FK/CK beda dari SM4 standar!) dengan
+  kunci per-file `SHA1(nama_file + secret)`
+- Semua kripto ditulis murni Python stdlib (`zuc.py`, `pyaes.py`, `tsm4.py`)
+- Referensi: [iMikano/PUBG-Unpacker](https://github.com/iMikano/PUBG-Unpacker)
+- Batasan jujur: belum ada repacker open-source terverifikasi untuk
+  era SM4 — tool ini unpack-only untuk format PUBG (repack = UE4 standar)
 
 ## Yang sudah terverifikasi (dites di sini)
 

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""paktool TUI — antarmuka terminal ala tool modding (ANSI colors).
+"""paktool TUI — tool gabungan: Unpack / Repack / Find SM4 / List.
 
-Murni Python stdlib, tanpa dependensi. Jalan di Termux, Linux, Mac, Windows 10+.
+- Auto-scan file .pak di folder tiap menu ditampilkan (file yang baru
+  ditambah langsung kebaca, tanpa restart).
+- Format terdeteksi otomatis: PUBG Mobile (footer ZUC, index AES/RSA,
+  payload SIMPLE1/SIMPLE2/SM4-custom) atau UE4 standar (fallback).
+- Murni Python stdlib, tanpa dependensi. Jalan di Termux.
 
 Jalankan:  python3 paktool_tui.py
 """
@@ -9,10 +13,13 @@ import glob
 import os
 import sys
 import time
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import paktool  # noqa: E402
-import sm4  # noqa: E402  (pastikan modul termuat)
+
+import paktool as _cli  # parser UE4 standar (fallback) + repack
+from pubgpak import PubgPak, PubgFormatError
+from sm4finder import find_secrets
 
 USE_COLOR = sys.stdout.isatty()
 
@@ -27,13 +34,13 @@ def c(name, s):
     return f"{C[name]}{s}{C['reset']}" if USE_COLOR else s
 
 
-def banner():
+def banner(n_pak):
     t = time.strftime("%d-%m-%Y %H:%M:%S")
     w = 56
     print(c("green", "┌" + "─" * w + "┐"))
     print(c("green", "│") + c("yellow", "  ⚡  P A K T O O L  ⚡".center(w)) + c("green", "│"))
     print(c("green", "│") + c("cyan", f"  {t}".ljust(w)) + c("green", "│"))
-    print(c("green", "│") + c("dim", "  UE4 .pak unpack / repack (SM4)".ljust(w)) + c("green", "│"))
+    print(c("green", "│") + c("dim", f"  {n_pak} file .pak terdeteksi di folder ini".ljust(w)) + c("green", "│"))
     print(c("green", "└" + "─" * w + "┘"))
 
 
@@ -59,12 +66,19 @@ def pause():
     input(c("yellow", "\nPress Enter untuk lanjut..."))
 
 
-def pick_pak():
-    files = sorted(glob.glob("*.pak") + glob.glob("*.PAK"))
+def scan_paks():
+    """Auto-scan .pak — dipanggil tiap menu tampil, jadi file baru kebaca."""
+    return sorted(glob.glob("*.pak") + glob.glob("*.PAK"))
+
+
+def pick_pak(files):
     if files:
-        print(c("white", "\n  File .pak di folder ini:"))
+        print(c("white", "\n  File .pak terdeteksi:"))
         for i, f in enumerate(files, 1):
-            print(f"   {c('cyan', str(i))}. {f}")
+            sz = os.path.getsize(f)
+            unit = "MB" if sz > 1 << 20 else "KB"
+            v = sz / (1 << 20) if sz > 1 << 20 else sz / 1024
+            print(f"   {c('cyan', str(i))}. {f}  {c('dim', f'({v:.1f} {unit})')}")
         print(f"   {c('cyan', '0')}. ketik path manual")
         try:
             n = int(input(c("yellow", "  Pilih [0-%d]: " % len(files))) or "0")
@@ -76,8 +90,56 @@ def pick_pak():
     return p or None
 
 
-def ask_key():
-    k = input(c("yellow", "  Kunci SM4 (32 hex, kosongkan bila tidak dienkripsi): ")).strip()
+def open_pak(path):
+    """Buka pak: coba format PUBG Mobile dulu, fallback ke UE4 standar."""
+    try:
+        pp = PubgPak(path)
+        return ("pubg", pp)
+    except PubgFormatError:
+        pass
+    except Exception as e:
+        return ("error", f"{e}")
+    # fallback UE4 standar
+    try:
+        data = open(path, "rb").read()
+        info = _cli.parse_footer(data)
+        return ("ue4", (data, info))
+    except _cli.PakError as e:
+        return ("error", f"bukan format PUBG Mobile maupun UE4 standar: {e}")
+
+
+def do_list(files):
+    pak = pick_pak(files)
+    if not pak or not os.path.isfile(pak):
+        print(c("red", "  ✗ file tidak ditemukan"))
+        return
+    kind, obj = open_pak(pak)
+    if kind == "error":
+        print(c("red", f"  ✗ {obj}"))
+        return
+    if kind == "pubg":
+        print(c("green", f"\n  ✓ format: PUBG Mobile  |  pak v{obj.version}  |  {len(obj.files)} file"))
+        print(c("dim", f"    mount: {obj.mount}"))
+        for name, size in obj.list_files():
+            print(f"    {size:>10}  {name}")
+    else:
+        data, info = obj
+        key = _ask_key_std()
+        if key == "INVALID":
+            return
+        try:
+            mount, entries = _cli.parse_index(data, info, key)
+        except _cli.PakError as e:
+            print(c("red", f"  ✗ {e}"))
+            return
+        print(c("green", f"\n  ✓ format: UE4 standar  |  {len(entries)} file  |  mount: {mount}"))
+        for e in entries:
+            print(f"    {e['usize']:>10}  {e['path']}")
+    pause()
+
+
+def _ask_key_std():
+    k = input(c("yellow", "  Kunci SM4 (32 hex, kosongkan bila tidak perlu): ")).strip()
     if not k:
         return None
     if len(k) != 32 or any(ch not in "0123456789abcdefABCDEF" for ch in k):
@@ -86,132 +148,153 @@ def ask_key():
     return bytes.fromhex(k)
 
 
-def do_list():
-    pak = pick_pak()
+def do_unpack(files):
+    pak = pick_pak(files)
     if not pak or not os.path.isfile(pak):
-        print(c("red", "  ✗ file tidak ditemukan")); return
-    key = ask_key()
-    if key == "INVALID":
-        return
-    try:
-        data = open(pak, "rb").read()
-        info = paktool.parse_footer(data)
-        mount, entries = paktool.parse_index(data, info, key)
-        print(c("green", f"\n  ✓ {len(entries)} file  |  pak v{info['version']}  |  mount: {mount}"))
-        for e in entries:
-            tag = c("red", " [enc]") if e["flags"] & paktool.FLAG_ENCRYPTED else ""
-            print(f"    {e['usize']:>10}  {e['path']}{tag}")
-    except paktool.PakError as e:
-        print(c("red", f"  ✗ error: {e}"))
-    pause()
-
-
-def do_unpack():
-    pak = pick_pak()
-    if not pak or not os.path.isfile(pak):
-        print(c("red", "  ✗ file tidak ditemukan")); return
-    key = ask_key()
-    if key == "INVALID":
+        print(c("red", "  ✗ file tidak ditemukan"))
         return
     out = input(c("yellow", "  Folder output [hasil_unpack]: ")).strip() or "hasil_unpack"
-    try:
-        data = open(pak, "rb").read()
-        info = paktool.parse_footer(data)
-        mount, entries = paktool.parse_index(data, info, key)
-        print(c("yellow", f"\n  ▶ UNPACKING {os.path.basename(pak)}"))
-        ok, fail = 0, 0
+    kind, obj = open_pak(pak)
+    if kind == "error":
+        print(c("red", f"  ✗ {obj}"))
+        return
+    print(c("yellow", f"\n  ▶ UNPACKING {os.path.basename(pak)}"))
+    if kind == "pubg":
+        def cb(i, total):
+            progress(i, total, prefix="  ")
+        ok, fail, fails = obj.extract_all(out, progress_cb=cb)
+        print(c("green", f"  ✓ Done: {ok} file") +
+              (c("red", f"   ✗ gagal: {fail}") if fail else ""))
+        for f_ in fails[:10]:
+            print(c("red", f"    - {f_}"))
+        if len(fails) > 10:
+            print(c("dim", f"    ... +{len(fails) - 10} lagi"))
+        print(c("green", f"  ✓ Hasil di: {os.path.abspath(out)}"))
+    else:
+        data, info = obj
+        key = _ask_key_std()
+        if key == "INVALID":
+            return
+        try:
+            _mount, entries = _cli.parse_index(data, info, key)
+        except _cli.PakError as e:
+            print(c("red", f"  ✗ {e}"))
+            return
+        ok = fail = 0
         for i, e in enumerate(entries, 1):
             try:
-                blob = paktool.read_entry_data(data, e, key)
+                blob = _cli.read_entry_data(data, e, key)
                 dest = os.path.join(out, e["path"].lstrip("/"))
                 os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
                 with open(dest, "wb") as f:
                     f.write(blob)
                 ok += 1
-            except paktool.PakError:
+            except _cli.PakError:
                 fail += 1
             progress(i, len(entries), prefix="  ")
-        print(c("green", f"  ✓ Done: {ok}") + (c("red", f"   ✗ Errors: {fail}") if fail else ""))
-        print(c("green", f"  ✓ Unpacked to: {os.path.abspath(out)}"))
-    except paktool.PakError as e:
-        print(c("red", f"  ✗ error: {e}"))
+        print(c("green", f"  ✓ Done: {ok}") + (c("red", f"   ✗ gagal: {fail}") if fail else ""))
+        print(c("green", f"  ✓ Hasil di: {os.path.abspath(out)}"))
     pause()
 
 
 def do_repack():
     src = input(c("yellow", "  Folder sumber: ")).strip()
     if not src or not os.path.isdir(src):
-        print(c("red", "  ✗ folder tidak ditemukan")); return
+        print(c("red", "  ✗ folder tidak ditemukan"))
+        return
     out = input(c("yellow", "  Nama file .pak output [baru.pak]: ")).strip() or "baru.pak"
-    key = ask_key()
+    key = _ask_key_std()
     if key == "INVALID":
         return
     z = input(c("yellow", "  Kompres zlib? [Y/n]: ")).strip().lower() != "n"
     print(c("yellow", f"\n  ▶ REPACKING -> {out}"))
-    files = []
-    for root, _d, names in os.walk(src):
-        for nm in names:
-            full = os.path.join(root, nm)
-            files.append((os.path.relpath(full, src).replace(os.sep, "/"), full))
-    files.sort()
-    import hashlib
-    import struct
-    import zlib as _zlib
-    blob = bytearray()
-    entries = []
-    for i, (rel, full) in enumerate(files, 1):
-        raw = open(full, "rb").read()
-        comp, method = (raw, 0) if not z else (_zlib.compress(raw, 6), 1)
-        if z and len(comp) >= len(raw):
-            comp, method = raw, 0
-        if key:
-            comp = comp + bytes((-len(comp)) % 16)
-            comp = sm4.ecb_process(key, comp)
-        off = len(blob)
-        blob += comp
-        entries.append((rel, off, len(comp), len(raw), method,
-                        hashlib.sha1(raw).digest(),
-                        paktool.FLAG_ENCRYPTED if key else 0))
-        progress(i, len(files), prefix="  ")
-    index = bytearray()
-    # mount point sebagai FString
-    mb = "../../../".encode() + b"\x00"
-    index += struct.pack("<i", len(mb)) + mb
-    index += struct.pack("<I", len(entries))
-    for rel, off, csz, usz, method, fh, fl in entries:
-        b = rel.encode() + b"\x00"
-        index += struct.pack("<i", len(b)) + b
-        index += struct.pack("<QQQI", off, csz, usz, method) + fh + struct.pack("B", fl)
-    idx_off, idx_size = len(blob), len(index)
-    footer = struct.pack("<IiQQ", paktool.MAGIC, 7, idx_off, idx_size)
-    footer += hashlib.sha1(bytes(index)).digest() + struct.pack("B", 0)
-    footer += struct.pack("<I", paktool.MAGIC)
-    with open(out, "wb") as f:
-        f.write(blob); f.write(index); f.write(footer)
-    print(c("green", f"  ✓ Done: {len(entries)} files -> {out}"))
+    print(c("dim", "    (format UE4 standar — repack format PUBG butuh private key RSA game)"))
+    n = [0]
+    import io
+    from contextlib import redirect_stdout
+    args = SimpleNamespace(key=key, src=src, out=out,
+                           mount="../../../", no_compress=not z)
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            _cli.cmd_repack(args)
+        print(c("green", f"  ✓ {buf.getvalue().strip()}"))
+    except _cli.PakError as e:
+        print(c("red", f"  ✗ {e}"))
+    pause()
+
+
+def do_find_sm4():
+    sos = sorted(glob.glob("*.so") + glob.glob("*.SO"))
+    so = None
+    if sos:
+        print(c("white", "\n  File .so terdeteksi:"))
+        for i, f in enumerate(sos, 1):
+            print(f"   {c('cyan', str(i))}. {f}")
+        print(f"   {c('cyan', '0')}. ketik path manual")
+        try:
+            n = int(input(c("yellow", "  Pilih [0-%d]: " % len(sos))) or "0")
+        except (ValueError, EOFError):
+            return
+        if 1 <= n <= len(sos):
+            so = sos[n - 1]
+    if not so:
+        so = input(c("yellow", "  Path libUE4.so: ")).strip()
+    if not so or not os.path.isfile(so):
+        print(c("red", "  ✗ file tidak ditemukan"))
+        return
+    print(c("yellow", f"\n  ▶ SCANNING {os.path.basename(so)} ..."))
+    try:
+        res = find_secrets(so)
+    except Exception as e:
+        print(c("red", f"  ✗ {e}"))
+        return
+    mb = res["scanned_bytes"] / (1 << 20)
+    print(c("dim", f"    discan: {mb:.1f} MB"))
+    known = res["known_found"]
+    if known:
+        print(c("green", f"\n  ✓ Secret dikenal ditemukan ({len(known)}):"))
+        for k in known:
+            print(f"    {c('green', '●')} {k}")
+        print(c("dim", "\n    Secret ini dipakai menurunkan kunci SM4 per-file saat unpack."))
+        print(c("dim", "    Unpack PUBG otomatis pakai secret bawaan — tidak perlu input manual."))
+    else:
+        print(c("yellow", "\n  ! tidak ada secret yang dikenal — versi game mungkin lebih baru"))
+    c16, c20 = res["candidates_16"], res["candidates_20hex"]
+    if c16 or c20:
+        print(c("yellow", f"\n  ? Kandidat pola secret ({len(c16) + len(c20)}):"))
+        for s_ in (c16 + c20)[:15]:
+            print(f"    - {s_}")
+        if len(c16) + len(c20) > 15:
+            print(c("dim", f"    ... +{len(c16) + len(c20) - 15} lagi"))
+        print(c("dim", "    Kandidat belum tentu secret asli — cocokkan dengan hasil unpack."))
     pause()
 
 
 def main():
     while True:
         os.system("clear" if os.name != "nt" else "cls")
-        banner()
+        files = scan_paks()  # auto-scan tiap menu tampil
+        banner(len(files))
         print(c("yellow", "\n  ▶ PILIH MODE\n"))
-        box_btn("1. List isi .pak")
-        box_btn("2. Unpack .pak")
-        box_btn("3. Repack folder -> .pak")
-        box_btn("4. Keluar")
+        box_btn("1. Unpack .pak (auto-detect format)")
+        box_btn("2. Repack folder -> .pak")
+        box_btn("3. Find SM4 (scan libUE4.so)")
+        box_btn("4. List isi .pak")
+        box_btn("5. Keluar")
         try:
             ch = input(c("white", "\n  > ")).strip()
         except EOFError:
             break
         if ch == "1":
-            do_list()
+            do_unpack(files)
         elif ch == "2":
-            do_unpack()
-        elif ch == "3":
             do_repack()
+        elif ch == "3":
+            do_find_sm4()
         elif ch == "4":
+            do_list(files)
+        elif ch == "5":
             print(c("green", "\n  Bye! 👋\n"))
             break
 
