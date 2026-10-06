@@ -43,3 +43,15 @@ Kunci tidak pernah disimpan — hanya dipakai saat run.
 - Metode kompresi yang didukung: none + zlib. Metode lain → error jelas.
 - Kunci SM4 yang benar per versi game — cari dengan SM4 finder dari
   `libUE4.so` game yang sesuai versinya.
+
+## Versi GUI (tampilan grafis)
+
+```
+python3 paktool_gui.py
+```
+
+Ada tombol Pilih file, kolom kunci SM4, tombol List / Unpack / Repack, dan
+panel log. Murni tkinter (bawaan Python, tanpa install tambahan).
+
+Catatan: GUI butuh layar grafis — jalan di PC/laptop. Di Termux (tanpa X
+server) pakai versi CLI `paktool.py` di atas.
