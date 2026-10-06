@@ -55,3 +55,13 @@ panel log. Murni tkinter (bawaan Python, tanpa install tambahan).
 
 Catatan: GUI butuh layar grafis — jalan di PC/laptop. Di Termux (tanpa X
 server) pakai versi CLI `paktool.py` di atas.
+
+## Versi TUI (tampilan terminal ala tool modding) — RECOMMENDED buat Termux
+
+```
+python3 paktool_tui.py
+```
+
+Menu interaktif dengan warna, progress bar, dan pilihan file bernomor —
+mirip tampilan tool-tool modding di Termux. Murni ANSI (bawaan Python),
+tanpa install tambahan, jalan di Termux.
