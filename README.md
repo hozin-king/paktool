@@ -1,10 +1,49 @@
 # paktool — unpack/repack UE4 .pak (Python, tanpa library tambahan)
 
-Tool baris perintah untuk membaca dan membangun ulang file `.pak` Unreal Engine 4
-(format standar). Ditulis murni Python stdlib — jalan di Termux / PC tanpa
-`pip install` apa pun.
+Tool untuk membaca dan membangun ulang file `.pak` Unreal Engine 4.
+Ditulis murni Python stdlib — jalan di Termux / PC tanpa `pip install` apa pun.
+
+---
+
+## Tutorial lengkap
+
+### 1. Persiapan (Termux)
+
+```bash
+pkg install python git -y
+git clone https://github.com/hozin-king/paktool
+cd paktool
+```
+
+Di PC/laptop: install Python 3.10+ dari python.org, lalu clone repo yang sama.
+
+### 2. Cara pakai — TUI (tampilan terminal, RECOMMENDED buat Termux)
+
+```bash
+python3 paktool_tui.py
+```
+
+Muncul menu bernomor ala tool modding:
 
 ```
+1. List isi .pak     → lihat daftar file di dalam pak
+2. Unpack .pak       → ekstrak semua file ke folder
+3. Repack folder     → bangun ulang .pak dari folder
+4. Keluar
+```
+
+Alurnya tiap menu:
+- **List**: pilih file .pak (ketik nomor) → masukkan kunci SM4 kalau
+  diminta (kosongkan kalau pak tidak dienkripsi) → daftar file tampil.
+- **Unpack**: pilih file .pak → kunci SM4 (bila perlu) → ketik nama
+  folder output → tunggu progress bar 100% → file ada di folder itu.
+- **Repack**: ketik folder sumber (berisi file hasil editanmu) → ketik
+  nama file .pak output → kunci SM4 (bila mau dienkripsi) → pilih
+  kompres zlib Y/n → tunggu sampai selesai.
+
+### 3. Cara pakai — CLI (perintah langsung, buat scripting)
+
+```bash
 python3 paktool.py list game.pak
 python3 paktool.py unpack game.pak -o hasil/
 python3 paktool.py --key <32 hex char> unpack game.pak -o hasil/
@@ -12,8 +51,43 @@ python3 paktool.py repack folder_sumber -o baru.pak
 python3 paktool.py --key <32 hex char> repack folder_sumber -o baru.pak
 ```
 
-`--key` = kunci SM4 (16 byte dalam 32 karakter hex), mis. hasil dari SM4 finder.
-Kunci tidak pernah disimpan — hanya dipakai saat run.
+`--key` = kunci SM4 (16 byte dalam 32 karakter hex), mis. hasil dari
+SM4 finder. **Kunci tidak pernah disimpan** — hanya dipakai saat run.
+
+### 4. Cara pakai — GUI (tampilan jendela, khusus PC/laptop)
+
+```bash
+python3 paktool_gui.py
+```
+
+Ada tombol Pilih file, kolom kunci SM4, tombol List / Unpack / Repack,
+dan panel log. Catatan: butuh layar grafis, jadi tidak jalan di Termux.
+
+### 5. Alur modding lengkap (contoh PUBG Mobile)
+
+```bash
+# 1. Cari kunci SM4 versi gamemu pakai SM4 finder (dari libUE4.so),
+#    mis. dapat: aJ4pV7iZ7pU4wP2aC2cZ... (32 hex char)
+
+# 2. Unpack pak gamenya
+python3 paktool.py --key <key> unpack game_patch_4.6.0.21542.pak -o bongkar/
+
+# 3. Edit file di dalam folder bongkar/ sesukamu
+
+# 4. Repack lagi (pakai key yang sama biar game bisa baca)
+python3 paktool.py --key <key> repack bongkar/ -o game_patch_4.6.0.21542_baru.pak
+```
+
+### 6. Kalau error
+
+| Pesan | Artinya | Solusi |
+|---|---|---|
+| `footer pak tidak dikenali` | layout footer beda dari standar | sesuaikan `FOOTER_CANDIDATES` di `paktool.py` |
+| `terenkripsi — berikan --key` | butuh kunci SM4 | isi `--key` / kolom kunci |
+| `metode kompresi 'X' belum didukung` | pakai kompresi selain zlib | laporkan biar ditambahkan |
+| `jumlah entry tidak wajar` | index gagal diparse (mungkin diobfuscate) | pak versi itu butuh penanganan khusus |
+
+---
 
 ## Yang sudah terverifikasi (dites di sini)
 
@@ -43,25 +117,3 @@ Kunci tidak pernah disimpan — hanya dipakai saat run.
 - Metode kompresi yang didukung: none + zlib. Metode lain → error jelas.
 - Kunci SM4 yang benar per versi game — cari dengan SM4 finder dari
   `libUE4.so` game yang sesuai versinya.
-
-## Versi GUI (tampilan grafis)
-
-```
-python3 paktool_gui.py
-```
-
-Ada tombol Pilih file, kolom kunci SM4, tombol List / Unpack / Repack, dan
-panel log. Murni tkinter (bawaan Python, tanpa install tambahan).
-
-Catatan: GUI butuh layar grafis — jalan di PC/laptop. Di Termux (tanpa X
-server) pakai versi CLI `paktool.py` di atas.
-
-## Versi TUI (tampilan terminal ala tool modding) — RECOMMENDED buat Termux
-
-```
-python3 paktool_tui.py
-```
-
-Menu interaktif dengan warna, progress bar, dan pilihan file bernomor —
-mirip tampilan tool-tool modding di Termux. Murni ANSI (bawaan Python),
-tanpa install tambahan, jalan di Termux.
